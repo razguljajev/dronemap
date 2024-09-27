@@ -1,0 +1,175 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Drone Map Replay</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="{% static 'map/mapbox-gl.js' %}"></script>
+    <link href="{% static 'map/mapbox-gl.css' %}" rel="stylesheet">
+    <style>
+        #map-container {
+            position: relative;
+            height: 100vh; 
+        }
+        #map {
+            position: absolute; 
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+        .map-button {
+            position: absolute;
+            background-color: rgba(255, 255, 255, 0.8); 
+            border: 1px solid #ccc; 
+            padding: 10px;
+            border-radius: 5px; 
+            cursor: pointer;
+            z-index: 10; 
+        }
+        #start-replay { top: 10px; left: 10px; }
+        #pause-replay { top: 10px; left: 120px; }
+        #stop-replay { top: 10px; left: 220px; }
+        #scroll-bar {
+            position: absolute;
+            bottom: 50px;
+            left: 10px;
+            width: 300px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="map-container">
+        <div id="map"></div>
+        <button id="start-replay" class="map-button" onclick="fetchDroneData()">Start Replay</button>
+        <button id="pause-replay" class="map-button" onclick="pauseReplay()">Pause Replay</button>
+        <button id="stop-replay" class="map-button" onclick="stopReplay()">Stop Replay</button>
+        <input type="range" id="scroll-bar" min="0" max="100" value="0" step="1" onchange="updateFromScrollBar()">
+    </div>
+
+    <script>
+        mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN'; 
+        var map = new mapboxgl.Map({
+            container: 'map',
+            style: {
+                version: 8,
+                sources: {
+                    osm: {
+                        type: 'raster',
+                        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+                    }
+                },
+                layers: [{
+                    id: 'osm',
+                    type: 'raster',
+                    source: 'osm',
+                }],
+            }
+        });
+
+        var replayData = [];
+        var currentIndex = 0;
+        var replayInterval = null;
+        var popup;
+        var dronePoint;
+
+        function fetchDroneData() {
+            fetch('/map/api/replay/')
+                .then(response => response.json())
+                .then(data => {
+                    replayData = data.features;
+                    document.getElementById('scroll-bar').max = replayData.length - 1;
+                    initializeDronePoint();
+                    startReplay();
+                })
+                .catch(error => console.error('Error fetching drone data:', error));
+        }
+
+        function initializeDronePoint() {
+            dronePoint = new mapboxgl.Marker({
+                color: '#FF0000',
+                scale: 1.5
+            })
+            .setLngLat([0, 0])
+            .addTo(map);
+            
+            dronePoint.getElement().addEventListener('mouseenter', (e) => {
+                var coords = dronePoint.getLngLat();
+                if (!popup) {
+                    popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false })
+                        .setHTML(`<div style="font-size: 12px; color: black;">Coordinates: [${coords.lng.toFixed(6)}, ${coords.lat.toFixed(6)}]</div>`)
+                        .setLngLat(coords)
+                        .addTo(map);
+                } else {
+                    popup.setLngLat(coords)
+                        .setHTML(`<div style="font-size: 12px; color: black;">Coordinates: [${coords.lng.toFixed(6)}, ${coords.lat.toFixed(6)}]</div>`)
+                        .addTo(map);
+                }
+            });
+
+            dronePoint.getElement().addEventListener('mouseleave', () => {
+                if (popup) {
+                    popup.remove();
+                    popup = null;
+                }
+            });
+        }
+
+        function updateDronePosition(coords) {
+            dronePoint.setLngLat(coords);
+        }
+
+        function startReplay() {
+            if (replayInterval) {
+                clearInterval(replayInterval);
+            }
+
+            currentIndex = 0;
+
+            replayInterval = setInterval(() => {
+                if (currentIndex < replayData.length) {
+                    var point = replayData[currentIndex];
+                    var coords = point.geometry.coordinates;
+
+                    updateDronePosition(coords);
+                    
+                    document.getElementById('scroll-bar').value = currentIndex;
+                    console.log(`Altitude: ${point.properties.altitude}, Timestamp: ${point.properties.timestamp}`);
+                    currentIndex++;
+                } else {
+                    clearInterval(replayInterval);
+                    if (popup) {
+                        popup.remove();
+                    }
+                }
+            }, 1000);
+        }
+
+        function updateFromScrollBar() {
+            currentIndex = document.getElementById('scroll-bar').value;
+            if (currentIndex >= 0 && currentIndex < replayData.length) {
+                var point = replayData[currentIndex];
+                var coords = point.geometry.coordinates;
+
+                updateDronePosition(coords);
+                map.setCenter(coords);
+                console.log(`Altitude: ${point.properties.altitude}, Timestamp: ${point.properties.timestamp}`);
+            }
+        }
+
+        function pauseReplay() {
+            clearInterval(replayInterval);
+        }
+
+        function stopReplay() {
+            currentIndex = 0;
+            clearInterval(replayInterval);
+            if (popup) {
+                popup.remove();
+            }
+            document.getElementById('scroll-bar').value = 0;
+        }
+    </script>
+</body>
+</html>
