@@ -37,19 +37,57 @@
             width: 300px;
             z-index: 10;
         }
+        #drone-selection {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 10;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        #data-display {
+            position: absolute;
+            top: 150px;
+            right: 10px;
+            z-index: 10;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
     <div id="map-container">
         <div id="map"></div>
-        <button id="start-replay" class="map-button" onclick="fetchDroneData()">Start Replay</button>
+
+        <!-- Drone Selection Dropdowns -->
+        <div id="drone-selection">
+            <label for="drone-select1">Select Drone 1 (mandatory):</label>
+            <select id="drone-select1" onchange="fetchDroneData(this.value, 'drone1')">
+                <option value="">--Select a drone--</option>
+            </select>
+
+            <label for="drone-select2">Select Drone 2 (optional):</label>
+            <select id="drone-select2" onchange="selectDrone(this, 'drone-select1')">
+                <option value="">--Select a drone--</option>
+            </select>
+        </div>
+
+        <button id="start-replay" class="map-button" onclick="startReplay()">Start Replay</button>
         <button id="pause-replay" class="map-button" onclick="pauseReplay()">Pause Replay</button>
         <button id="stop-replay" class="map-button" onclick="stopReplay()">Stop Replay</button>
         <input type="range" id="scroll-bar" min="0" max="100" value="0" step="1" onchange="updateFromScrollBar()">
+
+        <!-- Data Display -->
+        <div id="data-display">
+            <p id="distance"></p>
+            <p id="altitude-diff"></p>
+        </div>
     </div>
 
     <script>
-        mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN'; 
+        mapboxgl.accessToken = 'xxx'; 
         var map = new mapboxgl.Map({
             container: 'map',
             style: {
@@ -68,34 +106,98 @@
             }
         });
 
-        var replayData = [];
+        var replayData1 = [];
+        var replayData2 = [];
         var currentIndex = 0;
         var replayInterval = null;
         var popup;
-        var dronePoint;
+        var dronePoint1, dronePoint2;
 
-        function fetchDroneData() {
-            fetch('/map/api/replay/')
+        // Fetch the available drones and populate the dropdowns
+        function fetchAvailableDrones() {
+            fetch('/map/api/drones/')
+                .then(response => response.json())
+                .then(drones => {
+                    const droneSelect1 = document.getElementById('drone-select1');
+                    const droneSelect2 = document.getElementById('drone-select2');
+
+                    drones.forEach(drone => {
+                        const option1 = document.createElement('option');
+                        option1.value = drone.id;
+                        option1.text = drone.name;
+                        droneSelect1.appendChild(option1);
+
+                        const option2 = document.createElement('option');
+                        option2.value = drone.id;
+                        option2.text = drone.name;
+                        droneSelect2.appendChild(option2);
+                    });
+                })
+                .catch(error => console.error('Error fetching drones:', error));
+        }
+
+        // Initialize the map and fetch available drones
+        fetchAvailableDrones();
+
+        // Function to handle drone selection
+        function selectDrone(selectedDropdown, otherDropdownId) {
+            const selectedId = selectedDropdown.value;
+            const otherDropdown = document.getElementById(otherDropdownId);
+
+            // If a drone is selected, disable it in the other dropdown
+            for (let i = 0; i < otherDropdown.options.length; i++) {
+                const option = otherDropdown.options[i];
+                if (option.value === selectedId) {
+                    option.disabled = true; // Disable selected drone in the other dropdown
+                } else {
+                    option.disabled = false; // Enable other options
+                }
+            }
+        }
+
+        // Fetch the drone data based on the selected drone ID
+        function fetchDroneData(droneId, droneType) {
+            if (!droneId) return; // No drone selected
+
+            fetch(`/map/api/replay/${droneId}/`)
                 .then(response => response.json())
                 .then(data => {
-                    replayData = data.features;
-                    document.getElementById('scroll-bar').max = replayData.length - 1;
-                    initializeDronePoint();
-                    startReplay();
+                    if (droneType === 'drone1') {
+                        replayData1 = data.features;
+                    } else {
+                        replayData2 = data.features;
+                    }
+
+                    // Set the max value for the scroll bar based on the longer data
+                    document.getElementById('scroll-bar').max = Math.max(replayData1.length, replayData2.length) - 1;
+
+                    initializeDronePoints();
+                    if (droneType === 'drone1') startReplay();
                 })
                 .catch(error => console.error('Error fetching drone data:', error));
         }
 
-        function initializeDronePoint() {
-            dronePoint = new mapboxgl.Marker({
-                color: '#FF0000',
-                scale: 1.5
-            })
-            .setLngLat([0, 0])
-            .addTo(map);
+        function initializeDronePoints() {
+            if (!dronePoint1) {
+                dronePoint1 = new mapboxgl.Marker({ color: '#FF0000', scale: 1.5 })
+                    .setLngLat([0, 0])
+                    .addTo(map);
+            }
+
+            if (!dronePoint2) {
+                dronePoint2 = new mapboxgl.Marker({ color: '#0000FF', scale: 1.5 })
+                    .setLngLat([0, 0])
+                    .addTo(map);
+            }
             
-            dronePoint.getElement().addEventListener('mouseenter', (e) => {
-                var coords = dronePoint.getLngLat();
+            // Add mouse enter and leave events for both drone markers
+            addPopupToMarker(dronePoint1);
+            addPopupToMarker(dronePoint2);
+        }
+
+        function addPopupToMarker(marker) {
+            marker.getElement().addEventListener('mouseenter', () => {
+                var coords = marker.getLngLat();
                 if (!popup) {
                     popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false })
                         .setHTML(`<div style="font-size: 12px; color: black;">Coordinates: [${coords.lng.toFixed(6)}, ${coords.lat.toFixed(6)}]</div>`)
@@ -108,7 +210,7 @@
                 }
             });
 
-            dronePoint.getElement().addEventListener('mouseleave', () => {
+            marker.getElement().addEventListener('mouseleave', () => {
                 if (popup) {
                     popup.remove();
                     popup = null;
@@ -116,11 +218,39 @@
             });
         }
 
-        function updateDronePosition(coords) {
-            dronePoint.setLngLat(coords);
+        function updateDronePositions(coords1, coords2) {
+            // Check if coords1 is valid and not [0, 0]
+            if (coords1 && (coords1[0] !== 0 || coords1[1] !== 0)) {
+                dronePoint1.setLngLat(coords1);
+            } else {
+                // Remove dronePoint1 if it's at [0, 0]
+                if (dronePoint1) {
+                    dronePoint1.remove();
+                    dronePoint1 = null; // Clear the reference
+                }
+            }
+
+            // Check if coords2 is valid and not [0, 0]
+            if (coords2 && (coords2[0] !== 0 || coords2[1] !== 0)) {
+                dronePoint2.setLngLat(coords2);
+            } else {
+                // Remove dronePoint2 if it's at [0, 0]
+                if (dronePoint2) {
+                    dronePoint2.remove();
+                    dronePoint2 = null; // Clear the reference
+                }
+            }
         }
 
         function startReplay() {
+            const droneSelect1 = document.getElementById('drone-select1');
+
+            // Check if at least the first drone is selected
+            if (!droneSelect1.value) {
+                alert("Please select at least Drone 1 to start the replay.");
+                return;
+            }
+
             if (replayInterval) {
                 clearInterval(replayInterval);
             }
@@ -128,14 +258,14 @@
             currentIndex = 0;
 
             replayInterval = setInterval(() => {
-                if (currentIndex < replayData.length) {
-                    var point = replayData[currentIndex];
-                    var coords = point.geometry.coordinates;
+                if (currentIndex < replayData1.length || currentIndex < replayData2.length) {
+                    var coords1 = replayData1[currentIndex] ? replayData1[currentIndex].geometry.coordinates : null;
+                    var coords2 = replayData2[currentIndex] ? replayData2[currentIndex].geometry.coordinates : null;
 
-                    updateDronePosition(coords);
-                    
+                    if (coords1) updateDronePositions(coords1, coords2);
+                    calculateAndDisplayData(coords1, coords2);
+
                     document.getElementById('scroll-bar').value = currentIndex;
-                    console.log(`Altitude: ${point.properties.altitude}, Timestamp: ${point.properties.timestamp}`);
                     currentIndex++;
                 } else {
                     clearInterval(replayInterval);
@@ -146,16 +276,43 @@
             }, 1000);
         }
 
+        function calculateAndDisplayData(coords1, coords2) {
+            if (coords1 && coords2) {
+                const distance = calculateDistance(coords1, coords2);
+                const altitudeDiff = Math.abs(replayData1[currentIndex].properties.altitude - replayData2[currentIndex].properties.altitude);
+                document.getElementById('distance').innerText = `Distance: ${distance.toFixed(2)} meters`;
+                document.getElementById('altitude-diff').innerText = `Altitude Difference: ${altitudeDiff.toFixed(2)} meters`;
+            } else {
+                document.getElementById('distance').innerText = '';
+                document.getElementById('altitude-diff').innerText = '';
+            }
+        }
+
+        // Haversine formula to calculate distance between two coordinates
+        function calculateDistance(coord1, coord2) {
+            const R = 6371e3; // meters
+            const lat1 = coord1[1] * Math.PI / 180;
+            const lat2 = coord2[1] * Math.PI / 180;
+            const deltaLat = (coord2[1] - coord1[1]) * Math.PI / 180;
+            const deltaLon = (coord2[0] - coord1[0]) * Math.PI / 180;
+
+            const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+                      Math.cos(lat1) * Math.cos(lat2) *
+                      Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+            return R * c; // in meters
+        }
+
         function updateFromScrollBar() {
             currentIndex = document.getElementById('scroll-bar').value;
-            if (currentIndex >= 0 && currentIndex < replayData.length) {
-                var point = replayData[currentIndex];
-                var coords = point.geometry.coordinates;
 
-                updateDronePosition(coords);
-                map.setCenter(coords);
-                console.log(`Altitude: ${point.properties.altitude}, Timestamp: ${point.properties.timestamp}`);
-            }
+            var coords1 = replayData1[currentIndex] ? replayData1[currentIndex].geometry.coordinates : null;
+            var coords2 = replayData2[currentIndex] ? replayData2[currentIndex].geometry.coordinates : null;
+
+            if (coords1) updateDronePositions(coords1, coords2);
+            calculateAndDisplayData(coords1, coords2);
+            map.setCenter(coords1);
         }
 
         function pauseReplay() {
@@ -169,6 +326,9 @@
                 popup.remove();
             }
             document.getElementById('scroll-bar').value = 0;
+            updateDronePositions([0, 0], [0, 0]); // Reset drone positions
+            document.getElementById('distance').innerText = '';
+            document.getElementById('altitude-diff').innerText = '';
         }
     </script>
 </body>
