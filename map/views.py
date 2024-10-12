@@ -91,51 +91,37 @@ def success_view(request):
     return render(request, 'general/success.html')
 
 @api_view(['GET'])
-def replay_drone_data(request, drone_id):
-    drone_data = DroneData.objects.filter(drone__id=drone_id).order_by('timestamp')
-    features = []
+def replay_drone_data(request, drone1_id, drone2_id=None):
+    drone1_data = DroneData.objects.filter(drone__id=drone1_id).order_by('timestamp')
+    drone2_data = DroneData.objects.filter(drone__id=drone2_id).order_by('timestamp') if drone2_id else []
     
-    for data in drone_data:
-        features.append({
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [data.longitude, data.latitude],
-            },
-            "properties": {
-                "altitude": data.altitude,
-                "timestamp": data.timestamp.isoformat(),
-            }
-        })
+    def format_features(drone_data):
+        return [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [data.longitude, data.latitude],
+                },
+                "properties": {
+                    "altitude": data.altitude,
+                    "timestamp": data.timestamp.isoformat(),
+                }
+            } for data in drone_data
+        ]
     
-    return Response({"type": "FeatureCollection", "features": features})
+    response_data = {
+        "drone1": {
+            "type": "FeatureCollection",
+            "features": format_features(drone1_data)
+        }
+    }
+    
+    if drone2_data:
+        response_data["drone2"] = {
+            "type": "FeatureCollection",
+            "features": format_features(drone2_data)
+        }
 
-# Function to calculate distance using the Haversine formula
-def haversine(coord1, coord2):
-    R = 6371.0  # Radius of the Earth in kilometers
-    lat1, lon1 = map(radians, coord1)
-    lat2, lon2 = map(radians, coord2)
+    return Response(response_data)
 
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-
-    a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    distance = R * c  # Distance in kilometers
-
-    return distance
-
-@api_view(['POST'])
-def measure_distance(request):
-    drone1_id = request.data.get('drone1_id')
-    drone2_id = request.data.get('drone2_id')
-
-    if drone1_id and drone2_id:
-        drone1 = Drone.objects.get(id=drone1_id)
-        drone2 = Drone.objects.get(id=drone2_id)
-
-        # Calculate distance
-        distance = haversine((drone1.latitude, drone1.longitude), (drone2.latitude, drone2.longitude))
-
-        return Response({'distance': distance}, status=200)
-    return Response({'error': 'Invalid drone IDs'}, status=400)
